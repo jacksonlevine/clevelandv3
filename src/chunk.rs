@@ -1,4 +1,6 @@
-use bevy::{prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, tasks::{futures_lite::future, AsyncComputeTaskPool, Task}};
+use std::task::Poll;
+
+use bevy::{prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, tasks::{futures_lite::future, poll_once, AsyncComputeTaskPool, Task}, utils::HashMap};
 use bevy_rapier3d::prelude::Collider;
 use noise::{NoiseFn, Perlin};
 use num_enum::FromPrimitive;
@@ -51,7 +53,7 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
     
     for (entity, meshhandle, transform, mut collider) in chunks.iter_mut() {
 
-        println!("HIT ONE");
+        let mut memo: HashMap<IVec3, u32> = HashMap::new();
 
         let mut vertindex = 0;
 
@@ -74,7 +76,7 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
                             y: j,
                             z: (chunkpos.y * CW) + k,
                         };
-                        let combined = blockat(&perlin, spot);
+                        let combined = blockatmemo(&perlin, &spot, &mut memo);
                         let block = combined & Blocks::block_id_bits();
                         let flags = combined & Blocks::block_flag_bits();
                         
@@ -100,7 +102,7 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
                                 if Blocks::is_transparent(block) || Blocks::is_semi_transparent(block) || true {
                                     for (indie, neigh) in Cube::get_neighbors().iter().enumerate() {
                                         let neighspot = spot + *neigh;
-                                        let neigh_block = blockat( &perlin, neighspot)
+                                        let neigh_block = blockatmemo( &perlin, &neighspot, &mut memo)
                                             & Blocks::block_id_bits();
                                         let cubeside = CubeSide::from_primitive(indie);
                                         let neigh_semi_trans = Blocks::is_semi_transparent(neigh_block);
@@ -204,23 +206,6 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
         
         commands.entity(entity).insert(MeshRebuildTask(task));
 
-        
-
-        
-
-        // let mesh = meshes.get_mut(meshhandle.id()).unwrap();
-
-        // (*mesh) = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
-        // .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        // .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        // .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        // .with_inserted_indices(Indices::U32(indices));
-        // //Remove the rebuild indicator
-        // commands.entity(entity).remove::<RebuildThisChunk>();
-
-        // (*collider) = Collider::from_bevy_mesh(&mesh, &bevy_rapier3d::prelude::ComputedColliderShape::TriMesh).unwrap();
-
-
 
     }
 }
@@ -230,22 +215,33 @@ pub fn handle_completed_chunks(
     mut tasks: Query<(Entity, &mut MeshRebuildTask, &mut Handle<Mesh>)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    for (entity, mut task, mesholdhandle) in tasks.iter_mut() {
-        if let Some((mesh, collider)) = future::block_on(future::poll_once(&mut task.0)) {
+    // Create a Vec to store entities with completed tasks
+    let mut completed_tasks = Vec::new();
 
-            if let Some(meshold) = meshes.get_mut(mesholdhandle.id()) {
-                *meshold = mesh;
-
+    for (entity, mut task, mesh_handle) in tasks.iter_mut() {
+        // Check if the task is ready (non-blocking)
+        if let Some((mesh, collider)) = future::block_on(poll_once(&mut task.0)) {
+            // Update the mesh
+            if let Some(existing_mesh) = meshes.get_mut(mesh_handle.id()) {
+                *existing_mesh = mesh;
             }
 
-
-            commands.entity(entity).remove::<Collider>().insert(collider).remove::<MeshRebuildTask>().remove::<RebuildThisChunk>();
+            // Store the completed task entity to update later
+            completed_tasks.push((entity, collider));
         }
+    }
+
+    // Update entities with completed tasks outside the loop
+    for (entity, collider) in completed_tasks {
+        commands
+            .entity(entity)
+            .insert(collider)
+            .remove::<MeshRebuildTask>()
+            .remove::<RebuildThisChunk>();
     }
 }
 
-
-pub fn blockat(perlin: &Perlin, spot: IVec3) -> u32 {
+pub fn blockat(perlin: &Perlin, spot: &IVec3) -> u32 {
     // if self.headless {
     //     if self.generated_chunks.contains_key(&ChunkSystem::spot_to_chunk_pos(&spot)) {
 
@@ -268,10 +264,21 @@ pub fn blockat(perlin: &Perlin, spot: IVec3) -> u32 {
     //     None => return natural_blockat(perlin, spot),
     // }
 
-    return natural_blockat(perlin, spot);
+    return natural_blockat(perlin, &spot);
 }
 
-pub fn biome_noise(perlin: &Perlin, spot: IVec2) -> f64 {
+pub fn blockatmemo(perlin: &Perlin, spot: &IVec3, memo: &mut HashMap<IVec3, u32>) -> u32 {
+    return match memo.get(spot) {
+        Some(b) => { *b },
+        None => {
+            let b = blockat(perlin, &spot);
+            memo.insert(*spot, b);
+            b
+        },
+    }
+}
+
+pub fn biome_noise(perlin: &Perlin, spot: &IVec2) -> f64 {
     const XZDIVISOR1: f64 = 100.35 * 4.0;
 
     let y = 20;
@@ -288,7 +295,7 @@ pub fn biome_noise(perlin: &Perlin, spot: IVec2) -> f64 {
     noise1
 }
 
-pub fn ore_noise(perlin: &Perlin, spot: IVec3) -> f64 {
+pub fn ore_noise(perlin: &Perlin, spot: &IVec3) -> f64 {
     const XYZDIVISOR: f64 = 15.53;
 
     let noise1 = f64::max(
@@ -303,7 +310,7 @@ pub fn ore_noise(perlin: &Perlin, spot: IVec3) -> f64 {
     noise1 * ((60.0 - spot.y as f64).max(0.0) / 7.0)
 }
 
-pub fn feature_noise(perlin: &Perlin, spot: IVec3) -> f64 {
+pub fn feature_noise(perlin: &Perlin, spot: &IVec3) -> f64 {
     const XZDIVISOR1: f64 = 45.35 * 4.0;
 
     let y = 20;
@@ -320,7 +327,7 @@ pub fn feature_noise(perlin: &Perlin, spot: IVec3) -> f64 {
     noise1
 }
 
-pub fn cave_noise(perlin: &Perlin, spot: IVec3) -> f64 {
+pub fn cave_noise(perlin: &Perlin, spot: &IVec3) -> f64 {
     const XZDIVISOR1: f64 = 25.35;
 
     let noise1 = f64::max(
@@ -335,7 +342,7 @@ pub fn cave_noise(perlin: &Perlin, spot: IVec3) -> f64 {
     noise1
 }
 
-pub fn natural_blockat(perlin: &Perlin, spot: IVec3) -> u32 {
+pub fn natural_blockat(perlin: &Perlin, spot: &IVec3) -> u32 {
     if spot.y == 0 {
         return 15;
     }
@@ -343,11 +350,11 @@ pub fn natural_blockat(perlin: &Perlin, spot: IVec3) -> u32 {
 
             static WL: f32 = 30.0;
 
-            let biomenum = biome_noise(perlin, IVec2 {
+            let biomenum = biome_noise(perlin, &IVec2 {
                 x: spot.x,
                 y: spot.z,
             });
-            let biomenum2 = biome_noise(perlin, IVec2 {
+            let biomenum2 = biome_noise(perlin, &IVec2 {
                 x: spot.x * 20 + 5000,
                 y: spot.z * 20 + 5000,
             });
@@ -370,9 +377,9 @@ pub fn natural_blockat(perlin: &Perlin, spot: IVec3) -> u32 {
                 }
             }
 
-            let ret = if noise_func(perlin,spot) > 10.0 {
-                if noise_func(perlin,spot + IVec3 { x: 0, y: 10, z: 0 }) > 10.0 {
-                    if ore_noise(perlin,spot) > 1.0 {
+            let ret = if noise_func(perlin, &spot) > 10.0 {
+                if noise_func(perlin,&(*spot + IVec3 { x: 0, y: 10, z: 0 })) > 10.0 {
+                    if ore_noise(perlin,&spot) > 1.0 {
                         35
                     } else {
                         underdirt
@@ -381,9 +388,9 @@ pub fn natural_blockat(perlin: &Perlin, spot: IVec3) -> u32 {
 
                     let beachnoise = perlin.get([spot.y as f64/7.5, spot.z as f64/7.5, spot.x as f64/7.5]);
                     if spot.y > (WL + beachnoise as f32) as i32
-                    || noise_func(perlin,spot + IVec3 { x: 0, y: 5, z: 0 }) > 10.0
+                    || noise_func(perlin,&(*spot + IVec3 { x: 0, y: 5, z: 0 })) > 10.0
                     {
-                        if noise_func(perlin,spot + IVec3 { x: 0, y: 1, z: 0 }) < 10.0 {
+                        if noise_func(perlin,&(*spot + IVec3 { x: 0, y: 1, z: 0 })) < 10.0 {
                             surface
                         } else {
                             undersurface
@@ -417,7 +424,7 @@ fn mix(a: f64, b: f64, t: f64) -> f64 {
     a * (1.0 - t) + b * t
 }
 
-pub fn noise_func(perlin: &Perlin, spot: IVec3) -> f64 {
+pub fn noise_func(perlin: &Perlin, spot: &IVec3) -> f64 {
 
     let spot = spot;
     let spot = (Vec3::new(spot.x as f32, spot.y as f32, spot.z as f32) / 3.0) + Vec3::new(0.0, 10.0, 0.0);

@@ -236,15 +236,15 @@ impl Blocks {
         return &TEXS[id as usize][SIDES[side as usize]];
     }
 
-    pub fn get_uv_coords(tex: (u8, u8)) -> Vec<(f32, f32)> {
-        return vec![
-            (tex.0 as f32/16.0,            tex.1 as f32/16.0),
-            (tex.0 as f32/16.0 + 1.0/16.0, tex.1 as f32/16.0),
-            (tex.0 as f32/16.0 + 1.0/16.0, tex.1 as f32/16.0 + 1.0/16.0),
+    pub fn get_uv_coords(tex: (u8, u8)) -> [(f32, f32); 6] {
+        return [
+            (tex.0 as f32/16.0,            1.0 - (tex.1 as f32/16.0)),
+            (tex.0 as f32/16.0 + 1.0/16.0, 1.0 - (tex.1 as f32/16.0)),
+            (tex.0 as f32/16.0 + 1.0/16.0, 1.0 - (tex.1 as f32/16.0 + 1.0/16.0)),
 
-            (tex.0 as f32/16.0 + 1.0/16.0, tex.1 as f32/16.0 + 1.0/16.0),
-            (tex.0 as f32/16.0,            tex.1 as f32/16.0 + 1.0/16.0),
-            (tex.0 as f32/16.0,            tex.1 as f32/16.0),
+            (tex.0 as f32/16.0 + 1.0/16.0, 1.0 - (tex.1 as f32/16.0 + 1.0/16.0)),
+            (tex.0 as f32/16.0,            1.0 - (tex.1 as f32/16.0 + 1.0/16.0)),
+            (tex.0 as f32/16.0,            1.0 - (tex.1 as f32/16.0)),
         ]
     }
     pub fn is_transparent(id: u32) -> bool {

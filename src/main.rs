@@ -16,8 +16,8 @@ use bevy_rapier3d::prelude::*;
 use uuid::Uuid;
 
 const GROUND_TIMER: f32 = 0.5;
-const MOVEMENT_SPEED: f32 = 8.0;
-const JUMP_SPEED: f32 = 20.0;
+const MOVEMENT_SPEED: f32 = 4.0;
+const JUMP_SPEED: f32 = 14.0;
 const GRAVITY: f32 = -9.81;
 
 #[derive(Resource)]
@@ -287,14 +287,14 @@ pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServe
 
 
 
-    let trans = Transform::from_xyz(0.0, 100.0, 0.0);
+    let trans = Transform::from_xyz(0.0, 1000.0, 0.0);
     commands
         .spawn((
             SpatialBundle {
                 transform: trans,
                 ..default()
             },
-            Collider::round_cylinder(0.5, 0.3, 0.2),
+            Collider::round_cylinder(0.99, 0.3, 0.2),
             KinematicCharacterController {
                 custom_mass: Some(5.0),
                 up: Vec3::Y,
@@ -321,8 +321,8 @@ pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServe
             b.spawn(
                         (
                             TransformBundle::from_transform(
-                                Transform::from_xyz(0.0, 3.5, 0.3).looking_at(
-                                    Vec3::new(0.0, 2.0, 5.0), Dir3::Y
+                                Transform::from_xyz(0.0, 0.8, 0.3).looking_at(
+                                    Vec3::new(0.0, 1.0, 5.0), Dir3::Y
                                 ),
                             ),
                             MyHead{}
@@ -355,6 +355,7 @@ pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServe
             
             b.spawn((SceneBundle {
                 scene: asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/player.glb")),
+                transform: Transform::from_scale(Vec3::ONE * 0.3),
                 ..default()
             }, 
 
