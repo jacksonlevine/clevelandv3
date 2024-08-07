@@ -2,11 +2,15 @@
 mod jclient;
 mod jserver;
 mod camera;
+mod chunk;
+mod cube; 
+mod blockinfo;
 
 use std::{env, f32::consts::PI, time::Duration};
 
-use bevy::{animation::animate_targets, input::mouse::MouseMotion, pbr::CascadeShadowConfigBuilder, prelude::*, utils::HashMap, window::{CursorGrabMode, PrimaryWindow}};
+use bevy::{animation::animate_targets, input::mouse::MouseMotion, pbr::CascadeShadowConfigBuilder, prelude::*, render::{mesh::PrimitiveTopology, render_asset::RenderAssetUsages, Render}, utils::HashMap, window::{CursorGrabMode, PrimaryWindow}};
 use camera::JCamera;
+use chunk::{ChunkPlugin, JPerlin, RebuildThisChunk};
 use jserver::start_listening;
 use bevy_rapier3d::prelude::*;
 use uuid::Uuid;
@@ -136,8 +140,12 @@ fn main() {
 
 
 
-        a.add_plugins((DefaultPlugins,
+        a.add_plugins((DefaultPlugins.set (
+            ImagePlugin::default_nearest()
+        ),
             RapierPhysicsPlugin::<NoUserData>::default()))
+        .init_resource::<JPerlin>()
+        .add_plugins(ChunkPlugin)
         .insert_resource(AmbientLight {
             color: Color::WHITE,
             brightness: 2000.,
@@ -145,6 +153,7 @@ fn main() {
         .init_resource::<JControls>()
         .init_resource::<JVars>()
         .init_resource::<JCamera>()
+        
         .init_resource::<MyPlayerInitialized>()
         .insert_resource(
             {
@@ -223,7 +232,27 @@ fn initial_grab_cursor(mut primary_window: Query<&mut Window, With<PrimaryWindow
 }
 
 
-pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServer>) {
+pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServer>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
+
+) {
+    // Import the custom texture.
+    let custom_texture_handle: Handle<Image> = asset_server.load("world.png");
+    // Create and save a handle to the mesh.
+    let cube_mesh_handle: Handle<Mesh> = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD));
+
+    // Render the mesh with the custom texture using a PbrBundle, add the marker.
+    commands.spawn((
+        PbrBundle {
+            mesh: cube_mesh_handle,
+            material: materials.add(StandardMaterial {
+                base_color_texture: Some(custom_texture_handle),
+                ..default()
+            }),
+            ..default()
+        },
+        RebuildThisChunk,
+        Collider::halfspace(Vec3::Y).unwrap()
+    )); 
 
     //spawn a test floor
     commands.spawn((
@@ -231,8 +260,19 @@ pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServe
             scene: asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/cityblank.gltf")),
             ..default()
         },
+
         Collider::halfspace(Vec3::Y).unwrap())
     );
+
+    // // Create an empty mesh and get its handle
+    // let mesh_handle = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD));
+
+    // // Spawn an entity with the mesh handle and a default transform bundle
+    // commands.spawn((
+    //     mesh_handle,
+    //     RebuildThisChunk{},
+    //     TransformBundle::default(),
+    // ));
 
 
 
