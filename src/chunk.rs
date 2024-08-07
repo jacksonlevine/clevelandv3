@@ -1,4 +1,4 @@
-use bevy::{prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}};
+use bevy::{prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, tasks::{futures_lite::future, AsyncComputeTaskPool, Task}};
 use bevy_rapier3d::prelude::Collider;
 use noise::{NoiseFn, Perlin};
 use num_enum::FromPrimitive;
@@ -6,8 +6,8 @@ use num_enum::FromPrimitive;
 use crate::{blockinfo::Blocks, cube::{get_normal, Cube, CubeSide}};
 
 
-static CW: i32 = 52;
-static CH: i32 = 256;
+pub static CW: i32 = 16;
+pub static CH: i32 = 256;
 
 
 
@@ -15,13 +15,18 @@ pub struct ChunkPlugin;
 
 impl Plugin for ChunkPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, remesh_chunks);
+        app.add_systems(Update, remesh_chunks)
+        .add_systems(Update, handle_completed_chunks)
+        ;
     }
 }
 
 
 #[derive(Component)]
 pub struct RebuildThisChunk;
+
+#[derive(Component)]
+struct MeshRebuildTask(Task<(Mesh, Collider)>);
 
 #[derive(Resource, Default)]
 pub struct JPerlin {
@@ -37,165 +42,208 @@ pub fn spot_to_chunk_pos(spot: &IVec3) -> IVec2 {
 
 
 
-pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Handle<Mesh>, &Transform, &mut Collider), With<RebuildThisChunk>>, mut meshes: ResMut<Assets<Mesh>>, perlin: Res<JPerlin>) {
+pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Handle<Mesh>, &Transform, &mut Collider), (With<RebuildThisChunk>, Without<MeshRebuildTask>)>, mut meshes: ResMut<Assets<Mesh>>, perlin: Res<JPerlin>) {
+    let task_pool = AsyncComputeTaskPool::get();
     
     let perlin = perlin.perlin;
+
+
     
     for (entity, meshhandle, transform, mut collider) in chunks.iter_mut() {
 
         println!("HIT ONE");
 
-        let chunkpos = spot_to_chunk_pos(&transform.translation.as_ivec3());
-
-        let mut positions = Vec::new();
-        let mut uvs = Vec::new();
-        let mut normals = Vec::new();
-        let mut indices = Vec::new();
-
-
         let mut vertindex = 0;
 
+        let chunkpos = spot_to_chunk_pos(&transform.translation.as_ivec3());
+
+        let task = task_pool.spawn(async move {
+            
         
-        for i in 0..CW {
-            for k in 0..CW {
+            let mut positions = Vec::new();
+            let mut uvs = Vec::new();
+            let mut normals = Vec::new();
+            let mut indices = Vec::new();
 
-                for j in (0..CH).rev() {
-                    let spot = IVec3 {
-                        x: (chunkpos.x * CW) + i,
-                        y: j,
-                        z: (chunkpos.y * CW) + k,
-                    };
-                    let combined = blockat(&perlin, spot);
-                    let block = combined & Blocks::block_id_bits();
-                    let flags = combined & Blocks::block_flag_bits();
-                    
-
-                    if block != 0 {
-                        // if !weatherstoptops.contains_key(&vec::IVec2 {
-                        //     x: i,
-                        //     y: k,
-                        // }) {
-                        //     weatherstoptops.insert(
-                        //         vec::IVec2 {
-                        //             x: i,
-                        //             y: k,
-                        //         },
-                        //         spot.y,
-                        //     );
-                        // }
+            for i in 0..CW {
+                for k in 0..CW {
+    
+                    for j in (0..CH).rev() {
+                        let spot = IVec3 {
+                            x: (chunkpos.x * CW) + i,
+                            y: j,
+                            z: (chunkpos.y * CW) + k,
+                        };
+                        let combined = blockat(&perlin, spot);
+                        let block = combined & Blocks::block_id_bits();
+                        let flags = combined & Blocks::block_flag_bits();
                         
-
-                        
-
-
-                            if Blocks::is_transparent(block) || Blocks::is_semi_transparent(block) || true {
-                                for (indie, neigh) in Cube::get_neighbors().iter().enumerate() {
-                                    let neighspot = spot + *neigh;
-                                    let neigh_block = blockat( &perlin, neighspot)
-                                        & Blocks::block_id_bits();
-                                    let cubeside = CubeSide::from_primitive(indie);
-                                    let neigh_semi_trans = Blocks::is_semi_transparent(neigh_block);
-                                    let water_bordering_transparent = block == 2
-                                        && neigh_block != 2
-                                        && Blocks::is_transparent(neigh_block);
-
-                                    // let lmlock = self.lightmap.lock().unwrap();
-
-                                    // let blocklighthere = match lmlock.get(&neighspot) {
-                                    //     Some(k) => k.sum(),
-                                    //     None => LightColor::ZERO,
-                                    // };
-
-                                    // if blocklighthere != 0 {
-                                    //     info!("Block light here: {}", blocklighthere);
-                                    // }
-                                    //drop(lmlock);
-
-
-
-                                    if neigh_block == 0
-                                        || neigh_semi_trans
-                                        || water_bordering_transparent
-                                    {
-                                        let side = Cube::get_side(cubeside);
-
-
-                                        let texcoord = Blocks::get_tex_coords(block, cubeside);
-                                        let uvcoord = Blocks::get_uv_coords(*texcoord);
-
-                                        let normal = get_normal(cubeside);
-
-
-                                        for (ind, v) in side.chunks(3).enumerate() {
-                                  
-
-                                            // let pack = PackedVertex::pack(
-                                            //     i as u8 + v[0],
-                                            //     j as u8 + v[1],
-                                            //     k as u8 + v[2],
-                                            //     ind as u8,
-                                            //     clamped_light,
-                                            //     0u8, //TEMPORARY UNUSED
-                                            //     texcoord.0,
-                                            //     texcoord.1,
+    
+                        if block != 0 {
+                            // if !weatherstoptops.contains_key(&vec::IVec2 {
+                            //     x: i,
+                            //     y: k,
+                            // }) {
+                            //     weatherstoptops.insert(
+                            //         vec::IVec2 {
+                            //             x: i,
+                            //             y: k,
+                            //         },
+                            //         spot.y,
+                            //     );
+                            // }
+                            
+    
+                            
+    
+    
+                                if Blocks::is_transparent(block) || Blocks::is_semi_transparent(block) || true {
+                                    for (indie, neigh) in Cube::get_neighbors().iter().enumerate() {
+                                        let neighspot = spot + *neigh;
+                                        let neigh_block = blockat( &perlin, neighspot)
+                                            & Blocks::block_id_bits();
+                                        let cubeside = CubeSide::from_primitive(indie);
+                                        let neigh_semi_trans = Blocks::is_semi_transparent(neigh_block);
+                                        let water_bordering_transparent = block == 2
+                                            && neigh_block != 2
+                                            && Blocks::is_transparent(neigh_block);
+    
+                                        // let lmlock = self.lightmap.lock().unwrap();
+    
+                                        // let blocklighthere = match lmlock.get(&neighspot) {
+                                        //     Some(k) => k.sum(),
+                                        //     None => LightColor::ZERO,
+                                        // };
+    
+                                        // if blocklighthere != 0 {
+                                        //     info!("Block light here: {}", blocklighthere);
+                                        // }
+                                        //drop(lmlock);
+    
+    
+    
+                                        if neigh_block == 0
+                                            || neigh_semi_trans
+                                            || water_bordering_transparent
+                                        {
+                                            let side = Cube::get_side(cubeside);
+    
+    
+                                            let texcoord = Blocks::get_tex_coords(block, cubeside);
+                                            let uvcoord = Blocks::get_uv_coords(*texcoord);
+    
+                                            let normal = get_normal(cubeside);
+    
+    
+                                            for (ind, v) in side.chunks(3).enumerate() {
+                                      
+    
+                                                // let pack = PackedVertex::pack(
+                                                //     i as u8 + v[0],
+                                                //     j as u8 + v[1],
+                                                //     k as u8 + v[2],
+                                                //     ind as u8,
+                                                //     clamped_light,
+                                                //     0u8, //TEMPORARY UNUSED
+                                                //     texcoord.0,
+                                                //     texcoord.1,
+                                                // );
+    
+                                                positions.extend_from_slice(&[
+                                                    [(i + v[0] as i32) as f32, (j + v[1] as i32) as f32, (k + v[2] as i32) as f32 ]
+                                                ]);
+                                                uvs.extend_from_slice(&[
+                                                    [uvcoord[ind].0, uvcoord[ind].1]
+                                                ]);
+                                                
+                                                normals.extend_from_slice(&[
+                                                    [normal.x as f32, normal.y as f32, normal.z as f32]
+                                                ]);
+                                                indices.extend_from_slice(&[
+                                                    vertindex
+                                                ]);
+                                                vertindex += 1;
+    
+                                            }
+    
+                                        } else {
+                                            // tops.insert(
+                                            //     vec::IVec2 {
+                                            //         x: i + neigh.x,
+                                            //         y: k + neigh.z,
+                                            //     },
+                                            //     j + neigh.y,
                                             // );
-
-                                            positions.extend_from_slice(&[
-                                                [(spot.x + v[0] as i32) as f32, (spot.y + v[1] as i32) as f32, (spot.z + v[2] as i32) as f32 ]
-                                            ]);
-                                            uvs.extend_from_slice(&[
-                                                [uvcoord[ind].0, uvcoord[ind].1]
-                                            ]);
-                                            normals.extend_from_slice(&[
-                                                [normal.x as f32, normal.y as f32, normal.z as f32]
-                                            ]);
-                                            indices.extend_from_slice(&[
-                                                vertindex
-                                            ]);
-                                            vertindex += 1;
-
                                         }
-
-                                    } else {
-                                        // tops.insert(
-                                        //     vec::IVec2 {
-                                        //         x: i + neigh.x,
-                                        //         y: k + neigh.z,
-                                        //     },
-                                        //     j + neigh.y,
-                                        // );
                                     }
                                 }
-                            }
-
-
-
-
-                        
+    
+    
+    
+    
+                            
+                        }
                     }
+    
+                    
                 }
-
-                
             }
-        }
 
+            let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+            .with_inserted_indices(Indices::U32(indices.iter().rev().map(|s| *s).collect::<Vec<_>>()));
+            
+            let collider = Collider::from_bevy_mesh(&mesh, &bevy_rapier3d::prelude::ComputedColliderShape::TriMesh).unwrap();
+            
+            (mesh, collider)
+        
+        });
 
-        let mesh = meshes.get_mut(meshhandle.id()).unwrap();
+        
+        commands.entity(entity).insert(MeshRebuildTask(task));
 
-        (*mesh) = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_indices(Indices::U32(indices));
-        //Remove the rebuild indicator
-        commands.entity(entity).remove::<RebuildThisChunk>();
+        
 
-        (*collider) = Collider::from_bevy_mesh(&mesh, &bevy_rapier3d::prelude::ComputedColliderShape::TriMesh).unwrap();
+        
+
+        // let mesh = meshes.get_mut(meshhandle.id()).unwrap();
+
+        // (*mesh) = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
+        // .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        // .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        // .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        // .with_inserted_indices(Indices::U32(indices));
+        // //Remove the rebuild indicator
+        // commands.entity(entity).remove::<RebuildThisChunk>();
+
+        // (*collider) = Collider::from_bevy_mesh(&mesh, &bevy_rapier3d::prelude::ComputedColliderShape::TriMesh).unwrap();
 
 
 
     }
 }
+
+pub fn handle_completed_chunks(
+    mut commands: Commands,
+    mut tasks: Query<(Entity, &mut MeshRebuildTask, &mut Handle<Mesh>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (entity, mut task, mesholdhandle) in tasks.iter_mut() {
+        if let Some((mesh, collider)) = future::block_on(future::poll_once(&mut task.0)) {
+
+            if let Some(meshold) = meshes.get_mut(mesholdhandle.id()) {
+                *meshold = mesh;
+
+            }
+
+
+            commands.entity(entity).remove::<Collider>().insert(collider).remove::<MeshRebuildTask>().remove::<RebuildThisChunk>();
+        }
+    }
+}
+
 
 pub fn blockat(perlin: &Perlin, spot: IVec3) -> u32 {
     // if self.headless {

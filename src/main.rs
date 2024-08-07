@@ -10,7 +10,7 @@ use std::{env, f32::consts::PI, time::Duration};
 
 use bevy::{animation::animate_targets, input::mouse::MouseMotion, pbr::CascadeShadowConfigBuilder, prelude::*, render::{mesh::PrimitiveTopology, render_asset::RenderAssetUsages, Render}, utils::HashMap, window::{CursorGrabMode, PrimaryWindow}};
 use camera::JCamera;
-use chunk::{ChunkPlugin, JPerlin, RebuildThisChunk};
+use chunk::{ChunkPlugin, JPerlin, RebuildThisChunk, CW};
 use jserver::start_listening;
 use bevy_rapier3d::prelude::*;
 use uuid::Uuid;
@@ -238,21 +238,31 @@ pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServe
     // Import the custom texture.
     let custom_texture_handle: Handle<Image> = asset_server.load("world.png");
     // Create and save a handle to the mesh.
-    let cube_mesh_handle: Handle<Mesh> = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD));
+
 
     // Render the mesh with the custom texture using a PbrBundle, add the marker.
-    commands.spawn((
-        PbrBundle {
-            mesh: cube_mesh_handle,
-            material: materials.add(StandardMaterial {
-                base_color_texture: Some(custom_texture_handle),
-                ..default()
-            }),
-            ..default()
-        },
-        RebuildThisChunk,
-        Collider::halfspace(Vec3::Y).unwrap()
-    )); 
+    for i in -6..6 {
+        for j in -6..6 {
+            let offset = Vec3::new(i as f32 * CW as f32, 0.0, j as f32  * CW as f32);
+
+            let cube_mesh_handle: Handle<Mesh> = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD));
+
+
+            commands.spawn((
+                PbrBundle {
+                    mesh: cube_mesh_handle,
+                    material: materials.add(StandardMaterial {
+                        base_color_texture: Some(custom_texture_handle.clone()),
+                        ..default()
+                    }),
+                    transform: Transform::from_xyz(offset.x, offset.y, offset.z),
+                    ..default()
+                },
+                RebuildThisChunk,
+                Collider::halfspace(Vec3::Y).unwrap()
+            )); 
+        }
+    }
 
     //spawn a test floor
     commands.spawn((
@@ -277,7 +287,7 @@ pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServe
 
 
 
-    let trans = Transform::from_xyz(0.0, 5.0, 0.0);
+    let trans = Transform::from_xyz(0.0, 100.0, 0.0);
     commands
         .spawn((
             SpatialBundle {
