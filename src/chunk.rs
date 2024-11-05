@@ -1,11 +1,11 @@
 use std::task::Poll;
 
 use bevy::{prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, tasks::{futures_lite::future, poll_once, AsyncComputeTaskPool, Task}, utils::HashMap};
-use bevy_rapier3d::prelude::Collider;
+use bevy_rapier3d::prelude::{Collider, KinematicCharacterController};
 use noise::{NoiseFn, Perlin};
 use num_enum::FromPrimitive;
 
-use crate::{blockinfo::Blocks, cube::{get_normal, Cube, CubeSide}};
+use crate::{blockinfo::Blocks, camera::JCamera, cube::{get_normal, Cube, CubeSide}, revindices::REV_INDS, ChunkSurveyTimer, JMyPlayer, MyHead, GOTTEN_SPOTS};
 
 
 pub static CW: i32 = 16;
@@ -18,7 +18,7 @@ pub struct ChunkPlugin;
 impl Plugin for ChunkPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, remesh_chunks)
-        .add_systems(Update, handle_completed_chunks)
+        .add_systems(Update, survey_chunks)
         ;
     }
 }
@@ -42,16 +42,59 @@ pub fn spot_to_chunk_pos(spot: &IVec3) -> IVec2 {
     };
 }
 
+pub fn survey_chunks(time: Res<Time>, mut timer: ResMut<ChunkSurveyTimer>, mut head: Query<(
+    &mut Transform,
+    
+), With<KinematicCharacterController>>, mut commands: Commands, asset_server: Res<AssetServer>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    
+    if timer.0.tick(time.delta()).just_finished() {
+        let custom_texture_handle: Handle<Image> = asset_server.load("world.png");
+        let headcpos = spot_to_chunk_pos(&head.single().0.translation.as_ivec3());
+        
+        for i in -7..7 {
+            for j in -7..7 {
+                let cspot = headcpos + IVec2::new(i, j);
+                let offset = Vec3::new(cspot.x as f32 * CW as f32, 0.0, cspot.y as f32  * CW as f32);
+
+                unsafe {
+                    if !GOTTEN_SPOTS.contains_key(&cspot) {
+
+                        let cube_mesh_handle: Handle<Mesh> = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD));
 
 
-pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Handle<Mesh>, &Transform, &mut Collider), (With<RebuildThisChunk>, Without<MeshRebuildTask>)>, mut meshes: ResMut<Assets<Mesh>>, perlin: Res<JPerlin>) {
+                        commands.spawn((
+                            PbrBundle {
+                                mesh: cube_mesh_handle,
+                                material: materials.add(StandardMaterial {
+                                    base_color_texture: Some(custom_texture_handle.clone()),
+                                    ..default()
+                                }),
+                                transform: Transform::from_xyz(offset.x, offset.y, offset.z),
+                                ..default()
+                            },
+                            RebuildThisChunk,
+                            Collider::halfspace(Vec3::Y).unwrap()
+                        )); 
+
+                        GOTTEN_SPOTS.insert(cspot, true);
+                    }
+                }
+
+            }
+        }
+    }
+    
+}
+
+pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Handle<Mesh>, &Transform, &mut Collider), (With<RebuildThisChunk>, Without<MeshRebuildTask>)>,
+ mut meshes: ResMut<Assets<Mesh>>, perlin: Res<JPerlin>) {
     let task_pool = AsyncComputeTaskPool::get();
     
     let perlin = perlin.perlin;
 
-
     
-    for (entity, meshhandle, transform, mut collider) in chunks.iter_mut() {
+    
+    for (entity, meshhandle, transform, mut collider) in chunks.iter() {
 
         let mut memo: HashMap<IVec3, u32> = HashMap::new();
 
@@ -59,7 +102,7 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
 
         let chunkpos = spot_to_chunk_pos(&transform.translation.as_ivec3());
 
-        let task = task_pool.spawn(async move {
+     
             
         
             let mut positions = Vec::new();
@@ -161,9 +204,7 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
                                                 normals.extend_from_slice(&[
                                                     [normal.x as f32, normal.y as f32, normal.z as f32]
                                                 ]);
-                                                indices.extend_from_slice(&[
-                                                    vertindex
-                                                ]);
+                                                
                                                 vertindex += 1;
     
                                             }
@@ -191,6 +232,8 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
                 }
             }
 
+            indices.extend_from_slice(&REV_INDS[..vertindex]);
+
             let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
@@ -199,45 +242,20 @@ pub fn remesh_chunks(mut commands: Commands, mut chunks: Query<(Entity, &mut Han
             
             let collider = Collider::from_bevy_mesh(&mesh, &bevy_rapier3d::prelude::ComputedColliderShape::TriMesh).unwrap();
             
-            (mesh, collider)
+            // (mesh, collider)
         
-        });
-
-        
-        commands.entity(entity).insert(MeshRebuildTask(task));
-
-
-    }
-}
-
-pub fn handle_completed_chunks(
-    mut commands: Commands,
-    mut tasks: Query<(Entity, &mut MeshRebuildTask, &mut Handle<Mesh>)>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    // Create a Vec to store entities with completed tasks
-    let mut completed_tasks = Vec::new();
-
-    for (entity, mut task, mesh_handle) in tasks.iter_mut() {
-        // Check if the task is ready (non-blocking)
-        if let Some((mesh, collider)) = future::block_on(poll_once(&mut task.0)) {
-            // Update the mesh
-            if let Some(existing_mesh) = meshes.get_mut(mesh_handle.id()) {
+            if let Some(existing_mesh) = meshes.get_mut(meshhandle.id()) {
                 *existing_mesh = mesh;
             }
 
-            // Store the completed task entity to update later
-            completed_tasks.push((entity, collider));
-        }
-    }
-
-    // Update entities with completed tasks outside the loop
-    for (entity, collider) in completed_tasks {
-        commands
+            commands
             .entity(entity)
             .insert(collider)
-            .remove::<MeshRebuildTask>()
             .remove::<RebuildThisChunk>();
+
+        
+
+
     }
 }
 

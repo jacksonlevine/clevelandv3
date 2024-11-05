@@ -5,14 +5,17 @@ mod camera;
 mod chunk;
 mod cube; 
 mod blockinfo;
+mod revindices;
 
 use std::{env, f32::consts::PI, time::Duration};
 
 use bevy::{animation::animate_targets, input::mouse::MouseMotion, pbr::CascadeShadowConfigBuilder, prelude::*, render::{mesh::PrimitiveTopology, render_asset::RenderAssetUsages, Render}, utils::HashMap, window::{CursorGrabMode, PrimaryWindow}};
 use camera::JCamera;
 use chunk::{ChunkPlugin, JPerlin, RebuildThisChunk, CW};
+use dashmap::DashMap;
 use jserver::start_listening;
 use bevy_rapier3d::prelude::*;
+use once_cell::sync::Lazy;
 use uuid::Uuid;
 
 const GROUND_TIMER: f32 = 0.5;
@@ -42,6 +45,9 @@ pub struct ChildJId {
 pub struct JId {
     uuid: Uuid
 }
+
+#[derive(Resource)]
+pub struct ChunkSurveyTimer(Timer);
 
 impl Default for MyPlayerInitialized {
     fn default() -> Self {
@@ -153,6 +159,7 @@ fn main() {
         .init_resource::<JControls>()
         .init_resource::<JVars>()
         .init_resource::<JCamera>()
+        .insert_resource(ChunkSurveyTimer(Timer::new(Duration::from_secs(2), TimerMode::Repeating)))
         
         .init_resource::<MyPlayerInitialized>()
         .insert_resource(
@@ -232,6 +239,10 @@ fn initial_grab_cursor(mut primary_window: Query<&mut Window, With<PrimaryWindow
 }
 
 
+
+pub static mut GOTTEN_SPOTS: Lazy<DashMap<IVec2, bool>> = Lazy::new(|| DashMap::new());
+
+
 pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServer>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
 
 ) {
@@ -240,29 +251,29 @@ pub fn start_physical_world(mut commands: Commands, asset_server: Res<AssetServe
     // Create and save a handle to the mesh.
 
 
-    // Render the mesh with the custom texture using a PbrBundle, add the marker.
-    for i in -6..6 {
-        for j in -6..6 {
-            let offset = Vec3::new(i as f32 * CW as f32, 0.0, j as f32  * CW as f32);
+    // // Render the mesh with the custom texture using a PbrBundle, add the marker.
+    // for i in -6..6 {
+    //     for j in -6..6 {
+    //         let offset = Vec3::new(i as f32 * CW as f32, 0.0, j as f32  * CW as f32);
 
-            let cube_mesh_handle: Handle<Mesh> = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD));
+    //         let cube_mesh_handle: Handle<Mesh> = meshes.add(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD));
 
 
-            commands.spawn((
-                PbrBundle {
-                    mesh: cube_mesh_handle,
-                    material: materials.add(StandardMaterial {
-                        base_color_texture: Some(custom_texture_handle.clone()),
-                        ..default()
-                    }),
-                    transform: Transform::from_xyz(offset.x, offset.y, offset.z),
-                    ..default()
-                },
-                RebuildThisChunk,
-                Collider::halfspace(Vec3::Y).unwrap()
-            )); 
-        }
-    }
+    //         commands.spawn((
+    //             PbrBundle {
+    //                 mesh: cube_mesh_handle,
+    //                 material: materials.add(StandardMaterial {
+    //                     base_color_texture: Some(custom_texture_handle.clone()),
+    //                     ..default()
+    //                 }),
+    //                 transform: Transform::from_xyz(offset.x, offset.y, offset.z),
+    //                 ..default()
+    //             },
+    //             RebuildThisChunk,
+    //             Collider::halfspace(Vec3::Y).unwrap()
+    //         )); 
+    //     }
+    // }
 
     //spawn a test floor
     commands.spawn((

@@ -10,6 +10,7 @@ bevy_rapier3d = "0.27.0"
 bincode = "1.3.3"
 borsh = "1.5.1"
 borsh-derive = "1.5.1"
+dashmap = "6.1.0"
 lockfree = "0.5.1"
 log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
 noise = "0.9.0"
